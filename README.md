@@ -1,143 +1,189 @@
-# Agent Harness — Where It Fits & How To Use It
+# Agent Harness — The Scaffolding Around the Model
 
-## The big picture
-
-Think of software as three layers:
+A production-pattern agent framework implementing the ideas from
+Aditya Bhargava's talk: **"What if the harness mattered more than the model?"**
 
 ```
 ┌──────────────────────────────────────────┐
-│  APPLICATION                            │  ← your app, your business logic
+│  APPLICATION                             │  ← your app, your business logic
 │  "Book a flight"  "Summarize this doc"   │
 ├──────────────────────────────────────────┤
-│  HARNESS  ← what Bhargava's talk is about│  ← the scaffolding around the LLM
-│  Tools · Safety · Loop · State · Memory  │
+│  HARNESS  ← what this repo is           │  ← the scaffolding around the LLM
+│  Tools · Guardrails · Sub-agents · Trace │
 ├──────────────────────────────────────────┤
 │  MODEL                                  │  ← the LLM itself
 │  Claude · GPT · Gemini · open-source     │
 └──────────────────────────────────────────┘
 ```
 
-Most people start by wiring their app directly to the model. That works
-for demos. It breaks in production. The harness is the layer that makes
-LLM behavior **reliable, safe, and debuggable**.
+## Quick start
 
-## What the harness does
+```bash
+pip install requests
 
-| Concern | Without harness | With harness |
-|---------|----------------|--------------|
-| Tool calling | Model calls anything, no guardrails | Typed, constrained, auditable |
-| Safety | "Trust the prompt" | Deterministic enforcement, human approval gates |
-| Debugging | "Why did it do that?" | Full execution trace, every step recorded |
-| Recovery | Agent gets stuck, you start over | Pause/resume, retry, fallback |
-| Observability | Black box | Every Tool call, reasoning, and result logged |
+# Dry run — no API key, simulates the full loop
+python examples/dry_run_demo.py
 
-## The core loop: Reason → Act → Observe
-
-```
-                  ┌──────────┐
-                  │   TASK   │  "Find the cheapest flight to London"
-                  └────┬─────┘
-                       │
-            ┌──────────▼──────────┐
-            │      REASON          │  LLM thinks: "I need to search flights"
-            │  What should I do?   │
-            └──────────┬──────────┘
-                       │
-            ┌──────────▼──────────┐
-            │       ACT            │  Calls: search_flights(dest="London")
-            │  Execute the tool    │  (with safety check, human approval if needed)
-            └──────────┬──────────┘
-                       │
-            ┌──────────▼──────────┐
-            │     OBSERVE          │  Result: "3 flights found, £200-£450"
-            │  Feed result back    │  Feeds this back to model
-            └──────────┬──────────┘
-                       │
-                  ┌────▼────┐
-                  │  Done?  │── No ──→ REASON again
-                  └────┬────┘
-                       │ Yes
-                  ┌────▼────┐
-                  │  ANSWER │  "The cheapest is BA249 at £200"
-                  └─────────┘
+# Real model (via OneCLI proxy — any placeholder key works)
+export ANTHROPIC_API_KEY=placeholder
+python harness.py
 ```
 
-This loop IS the framework. Everything else — tool registries, safety
-gates, execution traces — supports this loop.
+## Package structure
 
-## Key concept: Partial Function Application (PFA)
+```
+agent-harness/
+├── harness.py                  # backward-compat re-export + demo
+├── harness/
+│   ├── __init__.py             # clean public API
+│   ├── tool_registry.py        # Tool + ToolRegistry (PFA, danger flagging)
+│   ├── harness.py              # Harness — Reason→Act→Observe loop
+│   ├── guardrails.py           # Input/Output guardrails, rate limiting, allowlists
+│   ├── subagent.py             # SubAgent + SubAgentPool
+│   ├── tracing.py              # Tracer — execution observability
+│   └── model.py                # ModelProvider, AnthropicProvider, MockProvider
+├── examples/
+│   ├── dry_run_demo.py         # No-API-key demo of the full loop
+│   ├── support_triage.py       # Customer support ticket triage
+│   ├── lead_qualification.py   # Sales lead scoring + routing
+│   └── deploy_verification.py  # Post-deploy health + log checks
+└── README.md
+```
+
+## Core concepts
+
+### 1. Tools as self-describing functions
+
+```python
+from harness import ToolRegistry
+
+tools = ToolRegistry()
+
+@tools.register(category="utility")
+def calculate(expression: str) -> str:
+    """Evaluate a mathematical expression. Supports +, -, *, /, **, %."""
+    ...
+
+@tools.register(dangerous=True, category="filesystem", constrain={"base_dir": "/tmp"})
+def write_file(filename: str, content: str, base_dir: str = "/tmp") -> str:
+    """Write content to a file."""
+    ...
+```
+
+The function's docstring becomes the LLM's tool description. Type hints become the JSON Schema. One source of truth.
+
+### 2. Partial Function Application (PFA)
 
 The most underrated idea from the talk:
 
 ```python
-# WITHOUT PFA: the agent can write anywhere
-@tools.register()
-def write_file(path: str, content: str):
-    ...
-
-# WITH PFA: pre-bind the directory — the agent CAN'T go outside it
+# PFA: pre-bind `base_dir` — the model NEVER sees it, CANNOT override it
 @tools.register(constrain={"base_dir": "/tmp/safe"})
-def write_file(path: str, content: str, base_dir: str = "/tmp"):
+def write_file(filename: str, content: str, base_dir: str = "/tmp"):
     ...
 ```
 
-The constrained argument is **never shown to the LLM**. It can't override it.
-This is deterministic safety — the kind that doesn't depend on the model
-"behaving."
+This is **deterministic safety** — it doesn't depend on the model "behaving."
 
-## Where agent harnesses fit in real software
+### 3. Reason → Act → Observe loop
 
-### Pattern 1: Internal tool (low risk)
+```
+TASK → REASON (model thinks) → ACT (tool executes) → OBSERVE (result fed back) → ...
+                                                                                    ↓
+                                                                                 ANSWER
+```
+
+Every agent follows this loop. The harness manages it, the model drives it.
+
+### 4. Guardrails — deterministic safety
+
+```python
+from harness import GuardrailPipeline, KeywordBlocklist, ContentFilter, RateLimiter
+
+pipeline = GuardrailPipeline.default()  # PII redaction, keyword blocking, secret detection
+
+# Or build your own:
+pipeline = (GuardrailPipeline()
+    .add_input(KeywordBlocklist(keywords=["ignore previous instructions"]))
+    .add_output(ContentFilter())
+    .add_operational(RateLimiter(max_calls=100)))
+```
+
+Guardrails enforce rules REGARDLESS of what the model asks for. "Prompts are not security."
+
+### 5. Sub-agents — specialized, composable
+
+```python
+from harness import SubAgent, SubAgentPool, ToolRegistry
+
+# Each sub-agent has its own tools, prompt, and scope
+research_tools = ToolRegistry()
+# ... register research-specific tools ...
+
+researcher = SubAgent(
+    name="researcher",
+    description="Search docs and the web for answers",
+    system_prompt="You are a thorough researcher.",
+    tools=research_tools,
+)
+
+pool = SubAgentPool()
+pool.add(researcher)
+# The parent harness sees sub-agents as tools it can delegate to
+```
+
+### 6. Human-in-the-loop
+
+Tools marked `dangerous=True` require human approval before execution. The harness pauses, shows what the model wants to do, and waits — no action happens without consent.
+
+### 7. Execution tracing
+
+```python
+run = harness.run_task("Process this refund request")
+run.print_trace()
+
+# Step 1: REASON → search_knowledge_base
+# Step 2: ACT    → search_knowledge_base(query="refund policy")
+# Step 3: OBSERVE← Refunds processed in 5-7 business days...
+# Step 4: DONE   → end_turn
+```
+
+Every step recorded — reasoning, tool calls, inputs, outputs, guardrail decisions. Debuggable, not a black box.
+
+## Where agent harnesses fit
+
+### Internal tool (low risk)
 ```
 User: "Summarize the Q3 report"
-  → Harness → read_file("q3_report.pdf") → summarize → respond
+  → Harness → read_file("q3.pdf") → summarize → respond
 ```
-Safe tools, no human approval needed. Runs autonomously.
+Safe tools, autonomous.
 
-### Pattern 2: Customer-facing agent (medium risk)
+### Customer-facing (medium risk)
 ```
 Customer: "Cancel my subscription"
-  → Harness → lookup_account() → cancel_subscription() → respond
-             ↑ triggers human-in-the-loop here
+  → Harness → lookup_account() → cancel_subscription()
+             ↑ human approves here
 ```
-Business-critical actions need approval gates. The harness enforces this
-regardless of what the model "wants" to do.
+Dangerous actions gated behind human approval.
 
-### Pattern 3: Autonomous ops agent (high risk)
+### Autonomous ops (high risk)
 ```
 Monitor: "Disk at 95%"
   → Harness → analyze_logs() → plan_action() → run_cleanup()
-                                          ↑ human approves before execution
+                                          ↑ human approves
 ```
-The harness is the safety boundary. Multiple approval stages.
+Multiple approval stages, full trace for audit.
 
-## Running this demo
+## What to build from here
 
-```bash
-# Install dependency
-pip install requests
-
-# Set your API key (OneCLI handles auth, use any placeholder)
-export ANTHROPIC_API_KEY=placeholder
-
-# Run the demo task
-python harness.py
-
-# Or interactive chat mode
-python harness.py --chat
-```
-
-## What to build next
-
-1. **Add memory** — store past conversations so the agent remembers context
-2. **Add a skill system** — reusable prompt + tool bundles for common tasks
-3. **Add eval traces** — record every run and score the agent's decisions
-4. **Add streaming** — see the agent's reasoning as it happens
-5. **Swap the model** — replace `call_model()` with OpenAI/Ollama to compare
+1. **Memory** — store past runs so agents remember context across sessions
+2. **Eval harness** — record runs and score decisions; now you're doing AI engineering
+3. **Streaming** — see reasoning as it happens
+4. **Multi-agent workflows** — chain sub-agents: researcher → writer → reviewer
+5. **Swap the model** — drop in OpenAI/Ollama via a new ModelProvider subclass
 
 ## The real lesson
-
-The talk's title "What if the harness mattered more than the model?" means:
 
 > A well-designed harness around a mediocre model beats a raw powerful model
 > with no scaffolding. The harness is where the ENGINEERING happens.
