@@ -15,3 +15,7 @@ how do i run it myself
 ---
 
 i get it now it ran
+
+---
+
+stage and commit changes
