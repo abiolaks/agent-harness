@@ -260,9 +260,37 @@ class GuardrailPipeline:
         self.operational_guardrails.append(guardrail)
         return self
 
-    def check_input(self, content: str, context: dict | None = None) -> GuardrailResult:
+    @staticmethod
+    def _extract_text(content) -> str:
+        """Extract plain text from a message content, which may be a string
+        or a list of Anthropic content blocks."""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    parts.append(block.get("text", ""))
+                elif isinstance(block, str):
+                    parts.append(block)
+            return "\n".join(parts)
+        return str(content)
+
+    @staticmethod
+    def _is_tool_result(content) -> bool:
+        """Check if content is a tool_result block (not user text)."""
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    return True
+        return False
+
+    def check_input(self, content, context: dict | None = None) -> GuardrailResult:
         """Run all input guardrails. Returns first rejection or last result."""
-        modified = content
+        # Skip guardrails on tool_result blocks — those aren't user input
+        if self._is_tool_result(content):
+            return GuardrailResult(allowed=True)
+        modified = self._extract_text(content)
         for gr in self.input_guardrails:
             result = gr.check(modified, context)
             if not result.allowed:
@@ -271,10 +299,11 @@ class GuardrailPipeline:
                 modified = result.modified_content
         return GuardrailResult(allowed=True, modified_content=modified)
 
-    def check_output(self, content: str, context: dict | None = None) -> GuardrailResult:
+    def check_output(self, content, context: dict | None = None) -> GuardrailResult:
         """Run all output guardrails. Returns first rejection."""
+        text = self._extract_text(content)
         for gr in self.output_guardrails:
-            result = gr.check(content, context)
+            result = gr.check(text, context)
             if not result.allowed:
                 return result
         return GuardrailResult(allowed=True)
