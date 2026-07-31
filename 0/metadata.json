@@ -1,0 +1,81 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "01KYWQDVQRKAER54A547DWV196",
+  "session_id": "019fb91a-7ce4-79cf-97bc-56ba99e00adc",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-31T18:36:48.621519Z",
+  "branch": "main",
+  "checkpoints_count": 5,
+  "save_step_count": 3,
+  "files_touched": [
+    "harness/guardrails.py"
+  ],
+  "agent": "Pi",
+  "model": "deepseek-v4-pro",
+  "turn_id": "1987ca4e1bbe",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 35095,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 502784,
+    "output_tokens": 5854,
+    "api_call_count": 17
+  },
+  "session_metrics": {
+    "turn_count": 5
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-31T18:36:48.605081Z",
+    "agent_lines": 33,
+    "agent_removed": 4,
+    "human_added": 3,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 36,
+    "total_lines_changed": 40,
+    "agent_percentage": 92.5,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 127,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".pi/extensions/entire/index.ts": 127
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 127,
+      "user_lines_removed": 0,
+      "agent_lines_added": 33,
+      "agent_lines_removed": 4,
+      "user_added_per_file": {
+        ".pi/extensions/entire/index.ts": 127
+      }
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 127,
+      "user_lines_removed": 0,
+      "agent_lines_added": 33,
+      "agent_lines_removed": 4,
+      "user_added_per_file": {
+        ".pi/extensions/entire/index.ts": 127
+      }
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 127,
+      "user_lines_removed": 0,
+      "agent_lines_added": 33,
+      "agent_lines_removed": 4,
+      "user_added_per_file": {
+        ".pi/extensions/entire/index.ts": 127
+      }
+    }
+  ]
+}
